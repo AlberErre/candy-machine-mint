@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import styled from "styled-components";
 import Countdown from "react-countdown";
 import { Button, CircularProgress, Snackbar } from "@material-ui/core";
 import Alert from "@material-ui/lab/Alert";
+import { programs as metaplexPrograms } from "@metaplex/js";
 
 import * as anchor from "@project-serum/anchor";
 
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 
 import { useAnchorWallet } from "@solana/wallet-adapter-react";
 import { WalletDialogButton } from "@solana/wallet-adapter-material-ui";
@@ -150,6 +151,93 @@ const Home = (props: HomeProps) => {
     }
   };
 
+  const getProvider = useCallback(() => {
+    const provider = new anchor.Provider(
+      props.connection,
+      (window as any).solana,
+      {
+        preflightCommitment: "processed",
+      }
+    );
+
+    console.log("provider", provider);
+
+    return provider;
+  }, [props.connection]);
+
+  const parseAccountData = (
+    tokenAccountsByOwner: anchor.web3.RpcResponseAndContext<
+      {
+        pubkey: anchor.web3.PublicKey;
+        account: anchor.web3.AccountInfo<anchor.web3.ParsedAccountData>;
+      }[]
+    >
+  ) => {
+    const parsed = tokenAccountsByOwner.value.map((account) => {
+      return {
+        pubkey: account.pubkey.toString(),
+        account: {
+          ProgramOwner: account.account.owner.toString(),
+          tokenAmount: account.account.data.parsed.info.tokenAmount,
+          tokenAddress: account.account.data.parsed.info.mint,
+          owner: account.account.data.parsed.info.owner,
+        },
+      };
+    });
+
+    const filterEmptyAccounts = parsed.filter(
+      (account) => account.account.tokenAmount.amount !== "0"
+    );
+
+    return filterEmptyAccounts;
+  };
+
+  const onMyTokensClick = async () => {
+    const OFFICIAL_TOKEN_ADDRESS =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const TokenProgramPubKey = new PublicKey(OFFICIAL_TOKEN_ADDRESS);
+
+    const OFFICIAL_METADATA_ADDRESS =
+      "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+    const MetadataProgramPubKey = new PublicKey(OFFICIAL_METADATA_ADDRESS);
+
+    const provider = getProvider();
+
+    console.log(
+      "provider.wallet.publicKey",
+      provider.wallet.publicKey.toString()
+    );
+
+    let rawTokenAccountsByOwner =
+      await provider.connection.getParsedTokenAccountsByOwner(
+        provider.wallet.publicKey,
+        { programId: TokenProgramPubKey }
+      );
+
+    const parsedTokenAccounts = parseAccountData(rawTokenAccountsByOwner);
+
+    console.log("parsedTokenAccounts", parsedTokenAccounts);
+
+    const tokenAddress = parsedTokenAccounts[0].account.tokenAddress;
+
+    const tokenInfo = await provider.connection.getParsedAccountInfo(
+      new PublicKey(tokenAddress)
+    );
+
+    const tokenMintAuthority = (tokenInfo as any).value?.data.parsed.info
+      .mintAuthority;
+
+    console.log("tokenMintAuthority", tokenMintAuthority);
+
+    const { Metadata } = metaplexPrograms.metadata;
+
+    const pda = await Metadata.getPDA(new PublicKey(tokenAddress));
+
+    const metadata = await Metadata.load(provider.connection, pda);
+
+    console.log("metadata", metadata);
+  };
+
   useEffect(() => {
     (async () => {
       if (wallet) {
@@ -179,6 +267,7 @@ const Home = (props: HomeProps) => {
 
       {wallet && <p>Remaining: {itemsRemaining}</p>}
 
+      <button onClick={onMyTokensClick}>my tokens</button>
       <MintContainer>
         {!wallet ? (
           <ConnectButton>Connect Wallet</ConnectButton>
